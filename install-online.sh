@@ -17,13 +17,13 @@ CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
 # 配置变量
-REPO_URL="https://raw.githubusercontent.com/your-username/wireguard-lite/main"
+REPO_URL="https://raw.githubusercontent.com/Tony855/wireguard_lite/refs/heads/main/"
 INSTALL_DIR="/tmp/wireguard-lite-install"
 BACKUP_DIR="/etc/wireguard/backups"
 
 # 版本信息
 VERSION="5.6"
-RELEASE_DATE="2024-01-01"
+RELEASE_DATE="2026-01-10"
 
 # 日志函数
 log() {
@@ -48,12 +48,12 @@ show_banner() {
     clear
     echo -e "${CYAN}"
     echo "╔══════════════════════════════════════════════════════════╗"
-    echo "║                                                        ║"
-    echo "║              WireGuard Lite 一键安装脚本                ║"
-    echo "║                    版本 ${VERSION}                        ║"
-    echo "║                                                        ║"
-    echo "║         https://github.com/your-username/wireguard-lite ║"
-    echo "║                                                        ║"
+    echo "║                                                          ║"
+    echo "║              WireGuard Lite 一键安装脚本                 ║"
+    echo "║                    版本 ${VERSION}                       ║"
+    echo "║                                                          ║"
+    echo "║ https://raw.githubusercontent.com/Tony855/wireguard_lite ║"
+    echo "║                                                          ║"
     echo "╚══════════════════════════════════════════════════════════╝"
     echo -e "${NC}"
     echo ""
