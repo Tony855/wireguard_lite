@@ -1,0 +1,41 @@
+[Unit]
+Description=Restore WireGuard NAT Rules
+Description=恢复WireGuard NAT规则
+After=network-online.target network.target
+Wants=network-online.target
+Requires=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/restore-wg-snat.sh
+ExecStartPre=/bin/sleep 5
+RemainAfterExit=yes
+StandardOutput=journal
+StandardError=journal
+
+# 安全设置
+ProtectSystem=strict
+ReadWritePaths=/etc/wireguard /var/log /etc/iptables /etc/nftables
+ReadOnlyPaths=/
+PrivateTmp=yes
+NoNewPrivileges=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+MemoryDenyWriteExecute=yes
+SystemCallFilter=@system-service
+SystemCallArchitectures=native
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW
+
+# 资源限制
+LimitNOFILE=1048576
+LimitNPROC=1048576
+LimitMEMLOCK=infinity
+
+# 重启策略
+StartLimitInterval=300
+StartLimitBurst=3
+
+[Install]
+WantedBy=multi-user.target
