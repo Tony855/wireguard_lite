@@ -17,7 +17,7 @@ LOG_FILE="/var/log/wireguard-lite.log"
 LOCK_FILE="/tmp/wireguard-lite.lock"
 
 # 加载模块
-MODULE_DIR="$(dirname "$0")/modules"
+MODULE_DIR="/etc/wireguard/modules"
 source "${MODULE_DIR}/validation.sh" 2>/dev/null || {
     echo "错误: 无法加载验证模块" >&2
     exit 1
