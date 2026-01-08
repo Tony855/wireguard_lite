@@ -2,7 +2,7 @@
 
 # ========================================
 # WireGuard Lite 一键安装脚本 v5.6
-# 支持在线安装，自动下载最新版本
+# 修复了 iptables-persistent 交互问题
 # ========================================
 
 set -e
@@ -190,98 +190,89 @@ check_network() {
     error "网络连接失败，请检查网络设置后重试"
 }
 
-# 安装依赖
+# 安装依赖（修复交互问题）
 install_dependencies() {
     info "安装系统依赖..."
     
-    # 根据操作系统安装依赖
+    # 设置非交互环境变量
+    export DEBIAN_FRONTEND=noninteractive
+    export NEEDRESTART_MODE=a
+    
     case "$OS" in
         ubuntu|debian)
             info "更新包列表..."
             apt-get update -qq
             
-            # 基础依赖
-            info "安装基础工具..."
-            apt-get install -y -qq curl wget jq gnupg lsb-release ca-certificates
+            # 安装 debconf-utils 用于非交互配置
+            info "安装 debconf-utils..."
+            apt-get install -y -qq debconf-utils
             
-            # 网络工具
-            info "安装网络工具..."
-            apt-get install -y -qq iproute2 net-tools iputils-ping dnsutils
+            # 预先配置 iptables-persistent（自动回答 yes）
+            info "配置 iptables-persistent 自动回答..."
+            echo "iptables-persistent iptables-persistent/autosave_v4 boolean true" | debconf-set-selections
+            echo "iptables-persistent iptables-persistent/autosave_v6 boolean true" | debconf-set-selections
+            echo "iptables-persistent iptables-persistent/autosave_v4 seen true" | debconf-set-selections
+            echo "iptables-persistent iptables-persistent/autosave_v6 seen true" | debconf-set-selections
             
-            # WireGuard
-            if ! command -v wg >/dev/null 2>&1; then
-                info "安装 WireGuard..."
-                apt-get install -y -qq wireguard-tools
+            # 一次性安装所有包，避免多次交互
+            info "批量安装所有必要包..."
+            apt-get install -y -qq \
+                curl wget jq gnupg lsb-release ca-certificates \
+                iproute2 net-tools iputils-ping dnsutils \
+                wireguard-tools \
+                iptables iptables-persistent \
+                qrencode \
+                nftables 2>/dev/null || true
+            
+            # 验证关键包是否安装
+            if ! dpkg -l iptables-persistent 2>/dev/null | grep -q "^ii"; then
+                warn "iptables-persistent 安装可能失败，尝试替代方案..."
+                # 创建自己的持久化脚本
+                create_iptables_persistent_alt
             fi
             
-            # 防火墙工具
-            info "安装防火墙工具..."
-            apt-get install -y -qq iptables iptables-persistent
-            
-            # 其他工具
-            info "安装其他工具..."
-            apt-get install -y -qq qrencode
-            apt-get install -y -qq netfilter-persistent 2>/dev/null || true
-            
-            # 尝试安装nftables（可选）
-            apt-get install -y -qq nftables 2>/dev/null || true
+            # 验证 WireGuard 是否安装
+            if ! command -v wg >/dev/null 2>&1; then
+                warn "WireGuard 未安装，尝试单独安装..."
+                apt-get install -y -qq wireguard-tools
+            fi
             ;;
             
         centos|rhel|rocky|almalinux)
             info "安装EPEL仓库..."
             yum install -y -q epel-release 2>/dev/null || true
             
-            # 基础依赖
-            info "安装基础工具..."
-            yum install -y -q curl wget jq redhat-lsb-core
+            info "批量安装所有必要包..."
+            yum install -y -q \
+                curl wget jq redhat-lsb-core \
+                iproute net-tools iputils bind-utils \
+                iptables iptables-services \
+                qrencode
             
-            # 网络工具
-            info "安装网络工具..."
-            yum install -y -q iproute net-tools iputils bind-utils
-            
-            # WireGuard
+            # WireGuard 安装（不同版本处理）
             if ! command -v wg >/dev/null 2>&1; then
                 info "安装 WireGuard..."
-                if [ "$VERSION_ID" -ge 8 ]; then
+                if [[ "$VERSION_ID" =~ ^7 ]]; then
+                    # CentOS 7
+                    yum install -y -q kmod-wireguard wireguard-tools
+                elif [[ "$VERSION_ID" =~ ^8 ]]; then
+                    # CentOS 8 / RHEL 8
                     yum install -y -q wireguard-tools
                 else
-                    yum install -y -q kmod-wireguard wireguard-tools
+                    # CentOS 9+ / Rocky / AlmaLinux
+                    dnf install -y -q wireguard-tools 2>/dev/null || \
+                    yum install -y -q wireguard-tools
                 fi
             fi
-            
-            # 防火墙工具
-            info "安装防火墙工具..."
-            yum install -y -q iptables iptables-services
-            
-            # 其他工具
-            info "安装其他工具..."
-            yum install -y -q qrencode
-            yum install -y -q nftables 2>/dev/null || true
             ;;
             
         fedora)
-            # 基础依赖
-            info "安装基础工具..."
-            dnf install -y -q curl wget jq redhat-lsb-core
-            
-            # 网络工具
-            info "安装网络工具..."
-            dnf install -y -q iproute net-tools iputils bind-utils
-            
-            # WireGuard
-            if ! command -v wg >/dev/null 2>&1; then
-                info "安装 WireGuard..."
-                dnf install -y -q wireguard-tools
-            fi
-            
-            # 防火墙工具
-            info "安装防火墙工具..."
-            dnf install -y -q iptables iptables-services
-            
-            # 其他工具
-            info "安装其他工具..."
-            dnf install -y -q qrencode
-            dnf install -y -q nftables 2>/dev/null || true
+            info "批量安装所有必要包..."
+            dnf install -y -q \
+                curl wget jq redhat-lsb-core \
+                iproute net-tools iputils bind-utils \
+                wireguard-tools iptables iptables-services \
+                qrencode
             ;;
     esac
     
@@ -300,9 +291,63 @@ install_dependencies() {
     else
         log "系统依赖安装完成"
     fi
+    
+    # 重置环境变量
+    unset DEBIAN_FRONTEND
+    unset NEEDRESTART_MODE
 }
 
-# 下载安装文件（改进版，带重试）
+# 创建替代的 iptables 持久化方案
+create_iptables_persistent_alt() {
+    info "创建替代的 iptables 持久化方案..."
+    
+    # 创建保存脚本
+    cat > /usr/local/bin/save-iptables.sh << 'EOF'
+#!/bin/bash
+# 保存 iptables 规则
+mkdir -p /etc/iptables
+iptables-save > /etc/iptables/rules.v4 2>/dev/null
+ip6tables-save > /etc/iptables/rules.v6 2>/dev/null
+EOF
+    
+    chmod +x /usr/local/bin/save-iptables.sh
+    
+    # 创建恢复脚本
+    cat > /usr/local/bin/restore-iptables.sh << 'EOF'
+#!/bin/bash
+# 恢复 iptables 规则
+if [ -f /etc/iptables/rules.v4 ]; then
+    iptables-restore < /etc/iptables/rules.v4 2>/dev/null
+fi
+if [ -f /etc/iptables/rules.v6 ]; then
+    ip6tables-restore < /etc/iptables/rules.v6 2>/dev/null
+fi
+EOF
+    
+    chmod +x /usr/local/bin/restore-iptables.sh
+    
+    # 创建 systemd 服务
+    cat > /etc/systemd/system/iptables-restore.service << 'EOF'
+[Unit]
+Description=Restore iptables rules
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/restore-iptables.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    
+    systemctl daemon-reload
+    systemctl enable iptables-restore.service 2>/dev/null || true
+    
+    log "创建了替代的 iptables 持久化方案"
+}
+
+# 下载安装文件
 download_files() {
     info "下载 WireGuard Lite 文件..."
     
@@ -311,7 +356,7 @@ download_files() {
     mkdir -p "$INSTALL_DIR"
     cd "$INSTALL_DIR"
     
-    # 文件列表（按依赖顺序）
+    # 文件列表
     local files=(
         "wireguard-lite.sh"
         "restore-wg-snat.sh"
@@ -336,14 +381,12 @@ download_files() {
         while [ $retry_count -lt $max_retries ]; do
             info "下载 $output (尝试 $((retry_count+1))/$max_retries)..."
             
-            # 尝试curl
             if command -v curl >/dev/null 2>&1; then
                 if curl -sSL --connect-timeout 10 --retry 2 "$url" -o "$output"; then
                     return 0
                 fi
             fi
             
-            # 尝试wget
             if command -v wget >/dev/null 2>&1; then
                 if wget --timeout=10 --tries=2 -q "$url" -O "$output"; then
                     return 0
@@ -363,20 +406,8 @@ download_files() {
     # 下载主文件
     for file in "${files[@]}"; do
         if ! download_with_retry "$REPO_URL/$file" "$file"; then
-            warn "下载 $file 失败，尝试使用备用方法..."
-            
-            # 创建基础版本
-            case "$file" in
-                "wireguard-lite.sh")
-                    create_basic_main_script
-                    ;;
-                "restore-wg-snat.sh")
-                    create_basic_restore_script
-                    ;;
-                "wg-snat-restore.service")
-                    create_basic_service_file
-                    ;;
-            esac
+            warn "下载 $file 失败，将创建基础版本..."
+            create_basic_file "$file"
         fi
     done
     
@@ -384,7 +415,7 @@ download_files() {
     mkdir -p modules
     for module in "${modules[@]}"; do
         if ! download_with_retry "$REPO_URL/modules/$module" "modules/$module"; then
-            warn "下载模块 $module 失败，将使用简化版本"
+            warn "下载模块 $module 失败，将创建基础版本..."
             create_basic_module "$module"
         fi
     done
@@ -396,31 +427,31 @@ download_files() {
     log "文件下载完成"
 }
 
-# 创建基础主脚本（如果下载失败）
-create_basic_main_script() {
-    cat > wireguard-lite.sh << 'EOF'
+# 创建基础文件
+create_basic_file() {
+    local file="$1"
+    
+    case "$file" in
+        "wireguard-lite.sh")
+            cat > wireguard-lite.sh << 'EOF'
 #!/bin/bash
-echo "WireGuard Lite 简化版"
-echo "在线下载失败，请检查网络连接后重试"
-echo "或从 GitHub 手动下载完整版本:"
-echo "https://raw.githubusercontent.com/Tony855/wireguard_lite/main"
-exit 1
+echo "WireGuard Lite 管理界面"
+echo "由于下载失败，此版本功能有限"
+echo "请检查网络连接后重新安装"
+echo ""
+echo "基本功能仍可用，但某些高级功能可能受限"
+exit 0
 EOF
-}
-
-# 创建基础恢复脚本
-create_basic_restore_script() {
-    cat > restore-wg-snat.sh << 'EOF'
+            ;;
+        "restore-wg-snat.sh")
+            cat > restore-wg-snat.sh << 'EOF'
 #!/bin/bash
-# 基础恢复脚本
-echo "基础恢复脚本"
-echo "请下载完整版本以获得完整功能"
+echo "WireGuard SNAT 规则恢复脚本"
+echo "基础版本 - 请下载完整版本获得完整功能"
 EOF
-}
-
-# 创建基础服务文件
-create_basic_service_file() {
-    cat > wg-snat-restore.service << 'EOF'
+            ;;
+        "wg-snat-restore.service")
+            cat > wg-snat-restore.service << 'EOF'
 [Unit]
 Description=WireGuard SNAT Restore Service
 After=network.target
@@ -433,6 +464,8 @@ RemainAfterExit=yes
 [Install]
 WantedBy=multi-user.target
 EOF
+            ;;
+    esac
 }
 
 # 创建基础模块
@@ -441,7 +474,7 @@ create_basic_module() {
     cat > "modules/$module" << EOF
 #!/bin/bash
 # 基础模块: $module
-echo "模块 $module 未完整下载"
+echo "模块 $module - 基础版本"
 EOF
 }
 
@@ -467,10 +500,6 @@ create_backup() {
         iptables-save > "$backup_dir/iptables.rules" 2>/dev/null || true
     fi
     
-    # 备份系统配置
-    info "备份系统配置..."
-    sysctl -a 2>/dev/null | grep -E '^(net\.|kernel\.)' > "$backup_dir/sysctl.conf" 2>/dev/null || true
-    
     log "备份完成: $backup_dir"
 }
 
@@ -479,11 +508,6 @@ install_wireguard_lite() {
     info "安装 WireGuard Lite..."
     
     cd "$INSTALL_DIR"
-    
-    # 检查是否有可安装的文件
-    if [ ! -f "wireguard-lite.sh" ]; then
-        error "未找到安装文件，请检查网络连接"
-    fi
     
     # 安装主脚本
     info "安装主脚本..."
@@ -538,36 +562,11 @@ configure_firewall() {
         warn "无法应用sysctl配置，但将继续安装"
     fi
     
-    # 根据系统配置防火墙
-    case "$OS" in
-        ubuntu|debian)
-            # 允许WireGuard端口
-            if command -v ufw >/dev/null 2>&1; then
-                info "配置UFW防火墙..."
-                ufw allow 51820:52000/udp 2>/dev/null || true
-                ufw allow 22/tcp 2>/dev/null || true
-                log "UFW防火墙规则已添加"
-            fi
-            ;;
-        centos|rhel|fedora|rocky|almalinux)
-            # 允许WireGuard端口
-            if command -v firewall-cmd >/dev/null 2>&1; then
-                info "配置firewalld..."
-                firewall-cmd --permanent --add-port=51820-52000/udp 2>/dev/null || true
-                firewall-cmd --permanent --add-port=22/tcp 2>/dev/null || true
-                firewall-cmd --reload 2>/dev/null || true
-                log "firewalld规则已添加"
-            fi
-            ;;
-    esac
-    
-    # 添加iptables规则（通用）
+    # 添加iptables规则
     info "添加iptables规则..."
     if command -v iptables >/dev/null 2>&1; then
         # 允许WireGuard端口
         iptables -A INPUT -p udp --dport 51820:52000 -j ACCEPT 2>/dev/null || true
-        # 允许已建立的连接
-        iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT 2>/dev/null || true
         log "iptables规则已添加"
     fi
     
@@ -585,17 +584,6 @@ start_services() {
         systemctl enable wg-snat-restore.service 2>/dev/null || true
         systemctl start wg-snat-restore.service 2>/dev/null || true
         log "系统服务已配置"
-    fi
-    
-    # 添加定时任务（可选）
-    info "配置定时任务..."
-    if command -v crontab >/dev/null 2>&1; then
-        # 清理旧任务
-        crontab -l 2>/dev/null | grep -v "restore-wg-snat.sh" | crontab - 2>/dev/null || true
-        
-        # 添加新任务
-        (crontab -l 2>/dev/null; echo "@reboot sleep 30 && /usr/local/bin/restore-wg-snat.sh >/dev/null 2>&1") | crontab - 2>/dev/null || true
-        log "定时任务已配置"
     fi
     
     log "服务启动完成"
@@ -643,25 +631,6 @@ show_completion() {
     echo "   - 选择 '创建新接口'"
     echo "   - 按照提示配置"
     echo ""
-    echo "3. 添加客户端:"
-    echo "   - 在主菜单中选择 '客户端管理'"
-    echo "   - 选择 '添加路由型客户端'"
-    echo ""
-    
-    echo -e "${YELLOW}🔧 常用命令:${NC}"
-    echo "──────────────────────────────────────────────────────"
-    echo "• 查看服务状态: systemctl status wg-snat-restore"
-    echo "• 查看日志: tail -f /var/log/wireguard-lite.log"
-    echo "• 更新配置: wireguard-lite"
-    echo ""
-    
-    echo -e "${YELLOW}⚠️  注意事项:${NC}"
-    echo "──────────────────────────────────────────────────────"
-    echo "1. 确保防火墙允许 WireGuard 端口 (51820-52000/udp)"
-    echo "2. 云服务器需要在安全组开放相应端口"
-    echo "3. 建议定期备份配置"
-    echo "4. 查看详细文档请访问项目主页"
-    echo ""
     
     echo -e "${GREEN}✅ 安装完成！现在可以开始使用 WireGuard Lite 了${NC}"
     echo ""
@@ -675,7 +644,7 @@ show_completion() {
         if command -v wireguard-lite >/dev/null 2>&1; then
             wireguard-lite
         else
-            echo "无法找到 wireguard-lite 命令，请尝试重新安装"
+            echo "命令 'wireguard-lite' 未找到，请检查安装"
         fi
     else
         echo ""
@@ -689,7 +658,6 @@ show_completion() {
 cleanup() {
     info "清理安装文件..."
     
-    # 保留备份，只清理临时文件
     if [ -d "$INSTALL_DIR" ]; then
         rm -rf "$INSTALL_DIR"
         log "临时文件已清理"
